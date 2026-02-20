@@ -17,6 +17,8 @@ Repeated identical requests become free and near-instant.
 
 **What "exact match" means**: The request must be byte-for-byte identical after normalization. `"What is Rust?"` and `"Tell me about Rust"` are different keys. Semantic similarity matching comes in Phase 3.
 
+**Hit rate depends entirely on your use case.** Exact match caching is most effective when the same prompt text is reused repeatedly. For free-form conversational use (where every user types something slightly different), real-world hit rates can be as low as 5–15%. For templated or structured applications, hit rates can reach 70–90%. See [Performance Impact](#performance-impact) for details.
+
 ## Architecture
 
 ### File Structure
@@ -347,11 +349,23 @@ The `test_same_prompts_same_key` test verifies that whitespace and casing differ
 | Phase 2 cache miss | ~1–3s (same as Phase 1) | Billed once |
 | Phase 2 cache hit | <1ms | Free |
 
-For repeated workloads (same queries reused), typical production hit rates of 70–90% mean:
-- **70% hit rate**: 70% of requests are free and instant
-- **90% hit rate**: API costs reduced by ~90%
-
 The first request for any unique prompt pays the full cost. Every subsequent identical request is free.
+
+### Expected Hit Rates by Use Case
+
+Hit rate depends on how much prompt variance exists in your workload:
+
+| Use Case | Expected Hit Rate | Why |
+|----------|-----------------|-----|
+| FAQ bot (fixed question set) | 70–90% | Users select from predefined prompts |
+| Templated code generation | 60–80% | Structured inputs repeat frequently |
+| Document summarization pipeline | 50–70% | Same documents processed multiple times |
+| General-purpose assistant | 5–15% | Every user types something different |
+| Free-form chat | <5% | Conversational context is unique per session |
+
+**For conversational applications, exact match caching has limited impact.** Two users asking about the same topic will almost never send byte-for-byte identical messages. `"What is Rust?"`, `"what is rust"`, `"Can you explain Rust?"`, and `"Tell me about Rust"` are all different cache keys — only the first two will hit each other (after normalization).
+
+This is the core motivation for Phase 3: semantic caching catches paraphrased queries that exact matching misses entirely.
 
 ## What's Not Implemented Yet (Phase 3 Preview)
 
