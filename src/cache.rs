@@ -2,6 +2,15 @@ use sha2::{Sha256, Digest};
 use crate::models::LLMRequest;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use reqwest::Client;
+use serde_json::{Value, json};
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    CreateCollectionBuilder, Distance, VectorParamsBuilder,
+    SearchPointsBuilder, PointStruct, UpsertPointsBuilder
+};
+use qdrant_client::qdrant::value::Kind;
+use uuid::Uuid;
 
 const CACHE_TTL_SECONDS: u64 = 86400;
 
@@ -84,6 +93,111 @@ impl RedisCache {
 
 }
 
+#[derive(Clone)]
+pub struct QdrantCache {
+    client: Qdrant,
+    collection_name: String
+}
+
+impl QdrantCache {
+
+    pub async fn new(qdrant_url: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+
+        // connect to qdrant
+        let client = Qdrant::from_url(qdrant_url).build()?;
+        let collection_name = "llm_cache".to_string();
+
+        // create collection if it doesn't exist (ignore error if it does)
+        let _ = client.create_collection(CreateCollectionBuilder::new(&collection_name)
+            .vectors_config(VectorParamsBuilder::new(384, Distance::Cosine)))
+            .await;
+
+        Ok(QdrantCache {
+            client,
+            collection_name
+        })
+
+    }
+
+    pub async fn store(
+        &self,
+        cache_key: &str,
+        embedding: Vec<f32>,
+        cached_response: &str
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+
+        let point = PointStruct::new(
+            Uuid::new_v4().to_string(),
+            embedding,
+            [
+                ("cache_key", cache_key.into()),
+                ("response", cached_response.into())
+            ]
+        );
+
+        self.client
+            .upsert_points(
+                UpsertPointsBuilder::new(&self.collection_name, vec![point])
+            )
+            .await?;
+
+        Ok(())
+
+    }
+
+    pub async fn search_similar(
+        &self,
+        embedding: Vec<f32>,
+        similarity_threshold: f32
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+
+        let search_result = self.client.search_points(
+            SearchPointsBuilder::new(&self.collection_name, embedding, 1)
+            .with_payload(true)
+            .score_threshold(similarity_threshold)
+        ).await?;
+
+        if let Some(point) = search_result.result.first() {
+            if let Some(response_value) = point.payload.get("response") {
+                if let Some(kind) = &response_value.kind {
+                    if let Kind::StringValue(s) = kind {
+                        return Ok(Some(s.clone()));
+                    }
+                }
+            }
+        }
+
+        Ok(None) // no match found
+
+    }
+
+}
+
+pub async fn get_embedding(
+    http_client: &Client,
+    embedding_url: &str,
+    text: &str
+) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+
+    let response = http_client
+        .post(embedding_url)
+        .json(&json!({"text": text}))
+        .send()
+        .await?;
+
+    let result: Value = response.json().await?;
+
+    let embedding: Vec<f32> = result["embedding"]
+        .as_array()
+        .ok_or("No embedding in response")?
+        .iter()
+        .filter_map(|v| v.as_f64().map(|f| f as f32))
+        .collect();
+
+    Ok(embedding)
+
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -122,6 +236,47 @@ mod tests {
 
         assert_eq!(key1, key2, "Normalized prompts should generate same key");
 
+    }
+
+    #[tokio::test]
+    async fn test_get_embedding() {
+        let client = Client::new();
+        let embedding = get_embedding(&client, "http://127.0.0.1:8001/embed", "What is Rust?")
+            .await
+            .expect("Failed to get embedding");
+
+        assert_eq!(embedding.len(), 384, "Embedding should have 384 dimensions");
+        println!("First 5 values: {:?}", &embedding[0..5]);
+    }
+
+    #[tokio::test]
+    async fn test_qdrant_store_and_search() {
+        let qdrant = QdrantCache::new("http://127.0.0.1:6334").await
+            .expect("Failed to connect to Qdrant");
+        
+        let client = Client::new();
+        
+        // Get embedding for "What is Rust?"
+        let embedding1 = get_embedding(&client, "http://127.0.0.1:8001/embed", "What is Rust?")
+            .await
+            .expect("Failed to get embedding");
+        
+        // Store it with a fake response
+        qdrant.store(
+            "test_key_1",
+            embedding1.clone(),
+            "Rust is a programming language"
+        ).await.expect("Failed to store");
+        
+        // Search with same embedding (should find exact match)
+        let result = qdrant.search_similar(embedding1, 0.99)
+            .await
+            .expect("Search failed");
+        
+        assert!(result.is_some(), "Should find the stored embedding");
+        assert_eq!(result.unwrap(), "Rust is a programming language");
+        
+        println!("✅ Qdrant store and search working!");
     }
 
 }

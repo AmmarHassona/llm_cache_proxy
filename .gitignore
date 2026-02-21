@@ -19,3 +19,14 @@ Thumbs.db
 
 # Redis
 dump.rdb
+
+# Qdrant
+qdrant_storage/
+
+# Virtual Environment
+*/venv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
