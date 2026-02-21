@@ -15,11 +15,25 @@ pub struct LLMRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct LLMResponse {
-    pub choices: Vec<Choice>
+    pub id: String,
+    pub object: String,
+    pub created: i64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Choice {
-    pub message: Message
+    pub message: Message,
+    pub index: i32,
+    pub finish_reason: Option<String>
 }

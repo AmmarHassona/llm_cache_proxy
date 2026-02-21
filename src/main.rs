@@ -2,12 +2,16 @@ mod models;
 mod handlers;
 mod client;
 mod cache;
+mod metrics;
+mod logger;
 
+use std::sync::Arc;
 use axum::{routing::{get, post, Router}};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use cache::{RedisCache, QdrantCache};
 use reqwest::Client;
+use metrics::Metrics;
 
 // share the cache and http client with all the handles
 // http client is shared to avoid creating a new 
@@ -19,7 +23,8 @@ pub struct AppState {
     pub qdrant_cache: QdrantCache,
     pub http_client: Client,
     pub groq_api_key: String,
-    pub embedding_url: String
+    pub embedding_url: String,
+    pub metrics: Arc<Metrics>
 }
 
 #[tokio::main]
@@ -50,18 +55,25 @@ async fn main() {
 
     let http_client = Client::new();
 
+    let metrics = Arc::new(Metrics::new());
+
     // create app state
     let state = AppState {
         redis_cache,
         qdrant_cache,
         http_client,
         groq_api_key,
-        embedding_url
+        embedding_url,
+        metrics
     };
     
     let app = Router::new()
         .route("/health", get(handlers::health_check))
+        .route("/dashboard", get(handlers::dashboard))
+        .route("/metrics", get(handlers::metrics))
         .route("/v1/chat/completions", post(handlers::proxy_handler))
+        .route("/admin/cache/clear", post(handlers::admin_clear_cache))
+        .route("/admin/stats", get(handlers::admin_stats))
         .with_state(state); // share the app state 
 
     let addr: SocketAddr = ([0, 0, 0, 0], 3000).into();

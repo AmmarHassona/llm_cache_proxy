@@ -91,6 +91,29 @@ impl RedisCache {
 
     }
 
+    pub async fn set_with_ttl(&self, key: &str, value: &str, ttl: u64) -> Result<(), redis::RedisError> {
+
+        let mut connection = self.conn_manager.clone();
+        connection.set_ex(key, value, ttl).await
+
+    }
+
+    pub async fn health_check(&self) -> bool {
+        let mut connection = self.conn_manager.clone();
+        redis::cmd("PING")
+            .query_async::<String>(&mut connection)
+            .await
+            .is_ok()
+    }
+
+    pub async fn flush_all(&self) -> Result<(), redis::RedisError> {
+        let mut connection = self.conn_manager.clone();
+        redis::cmd("FLUSHDB")
+            .query_async::<redis::Value>(&mut connection)
+            .await
+            .map(|_| ())
+    }
+
 }
 
 #[derive(Clone)]
@@ -107,10 +130,15 @@ impl QdrantCache {
         let client = Qdrant::from_url(qdrant_url).build()?;
         let collection_name = "llm_cache".to_string();
 
-        // create collection if it doesn't exist (ignore error if it does)
-        let _ = client.create_collection(CreateCollectionBuilder::new(&collection_name)
+        // create collection if it doesn't exist
+        match client.create_collection(CreateCollectionBuilder::new(&collection_name)
             .vectors_config(VectorParamsBuilder::new(384, Distance::Cosine)))
-            .await;
+            .await
+        {
+            Ok(_) => {}
+            Err(e) if e.to_string().contains("already exists") => {}
+            Err(e) => eprintln!("Warning: Qdrant collection creation failed: {}", e),
+        }
 
         Ok(QdrantCache {
             client,
@@ -143,6 +171,10 @@ impl QdrantCache {
 
         Ok(())
 
+    }
+
+    pub async fn health_check(&self) -> bool {
+        self.client.list_collections().await.is_ok()
     }
 
     pub async fn search_similar(
@@ -196,6 +228,21 @@ pub async fn get_embedding(
 
     Ok(embedding)
 
+}
+
+pub async fn check_embedding_service(http_client: &Client, embedding_url: &str) -> bool {
+    let health_url = match reqwest::Url::parse(embedding_url) {
+        Ok(mut url) => { url.set_path("/health"); url }
+        Err(_) => return false,
+    };
+
+    http_client
+        .get(health_url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

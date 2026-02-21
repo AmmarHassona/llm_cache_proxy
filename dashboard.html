@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Cache Proxy — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+    * { font-family: 'Inter', sans-serif; }
+
+    body { background: #0f172a; }
+
+    /* Pulsing live dot */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(1.4); }
+    }
+    .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+    /* Number count-up shimmer */
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position:  200% center; }
+    }
+    .shimmer {
+      background: linear-gradient(90deg, #e2e8f0 25%, #94a3b8 50%, #e2e8f0 75%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shimmer 1.2s linear infinite;
+    }
+
+    /* Card hover glow */
+    .card-glow { transition: box-shadow 0.3s ease, transform 0.2s ease; }
+    .card-glow:hover {
+      box-shadow: 0 0 0 1px rgba(59,130,246,0.3), 0 20px 40px rgba(0,0,0,0.4);
+      transform: translateY(-2px);
+    }
+
+    /* Circular progress ring */
+    .ring-progress {
+      transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Accordion chevron */
+    .chevron { transition: transform 0.25s ease; }
+    .chevron.open { transform: rotate(180deg); }
+
+    /* Accordion body */
+    .accordion-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease;
+    }
+    .accordion-body.open { max-height: 600px; }
+
+    /* Gradient borders on cards */
+    .gradient-border {
+      position: relative;
+      border-radius: 1rem;
+    }
+    .gradient-border::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 1rem;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(59,130,246,0.4), rgba(16,185,129,0.2), transparent);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+
+    /* Fade in animation */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in { animation: fadeInUp 0.5s ease forwards; }
+    .fade-in-1 { animation-delay: 0.05s; opacity: 0; }
+    .fade-in-2 { animation-delay: 0.10s; opacity: 0; }
+    .fade-in-3 { animation-delay: 0.15s; opacity: 0; }
+    .fade-in-4 { animation-delay: 0.20s; opacity: 0; }
+    .fade-in-5 { animation-delay: 0.25s; opacity: 0; }
+    .fade-in-6 { animation-delay: 0.30s; opacity: 0; }
+
+    /* Error shake */
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%,60% { transform: translateX(-4px); }
+      40%,80% { transform: translateX(4px); }
+    }
+    .shake { animation: shake 0.4s ease; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 antialiased">
+
+  <!-- ─── Background grid decoration ──────────────────────────── -->
+  <div class="fixed inset-0 pointer-events-none"
+       style="background-image: linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+                                 linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+              background-size: 48px 48px;">
+  </div>
+
+  <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- ─── Header ────────────────────────────────────────────── -->
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 fade-in fade-in-1">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xl
+                    bg-gradient-to-br from-blue-500 to-cyan-400 shadow-lg shadow-blue-500/30">
+          🚀
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight">LLM Cache Proxy</h1>
+          <p class="text-xs text-slate-400 font-medium tracking-wide uppercase">Dashboard</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <!-- Error badge (hidden by default) -->
+        <div id="error-badge"
+             class="hidden items-center gap-2 px-3 py-1.5 rounded-full
+                    bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium">
+          <span>⚠</span>
+          <span id="error-text">Unable to reach /metrics</span>
+        </div>
+
+        <!-- Live indicator -->
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-full
+                    bg-slate-800/80 border border-slate-700/50 backdrop-blur-sm">
+          <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div>
+          <span class="text-xs text-slate-300 font-medium">Live</span>
+        </div>
+
+        <!-- Last updated -->
+        <div class="text-xs text-slate-400 font-mono">
+          Updated <span id="last-updated">—</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ─── Stat Cards ─────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+      <!-- Total Requests -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-5
+                  fade-in fade-in-2">
+        <div class="flex items-start justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/20
+                      flex items-center justify-center text-lg">📊</div>
+          <span class="text-xs font-medium text-slate-400 bg-slate-700/50 px-2 py-0.5 rounded-full">requests</span>
+        </div>
+        <div id="stat-total-requests" class="text-3xl font-bold tracking-tight text-white mb-1">—</div>
+        <div class="text-sm text-slate-400">Total Requests</div>
+        <div class="mt-3 h-1 rounded-full bg-slate-700/60">
+          <div id="bar-total" class="h-1 rounded-full bg-blue-500 transition-all duration-700" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Hit Rate -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-5
+                  fade-in fade-in-3 flex flex-col">
+        <div class="flex items-start justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/20
+                      flex items-center justify-center text-lg">🎯</div>
+          <span class="text-xs font-medium text-slate-400 bg-slate-700/50 px-2 py-0.5 rounded-full">efficiency</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <div>
+            <div id="stat-hit-rate" class="text-3xl font-bold tracking-tight text-white mb-1">—</div>
+            <div class="text-sm text-slate-400">Hit Rate</div>
+          </div>
+          <!-- Circular progress -->
+          <div class="ml-auto">
+            <svg width="56" height="56" viewBox="0 0 56 56" class="-rotate-90">
+              <circle cx="28" cy="28" r="22" fill="none" stroke="#1e293b" stroke-width="5"/>
+              <circle id="ring-hit" cx="28" cy="28" r="22" fill="none"
+                      stroke="#10b981" stroke-width="5"
+                      stroke-linecap="round"
+                      stroke-dasharray="138.2"
+                      stroke-dashoffset="138.2"
+                      class="ring-progress"/>
+            </svg>
+          </div>
+        </div>
+        <div class="mt-3 grid grid-cols-2 gap-2">
+          <div class="rounded-lg bg-slate-700/40 px-2 py-1.5 text-center">
+            <div id="stat-exact-hits" class="text-sm font-semibold text-blue-400">—</div>
+            <div class="text-xs text-slate-500">Exact</div>
+          </div>
+          <div class="rounded-lg bg-slate-700/40 px-2 py-1.5 text-center">
+            <div id="stat-semantic-hits" class="text-sm font-semibold text-cyan-400">—</div>
+            <div class="text-xs text-slate-500">Semantic</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cost Saved -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-5
+                  fade-in fade-in-4">
+        <div class="flex items-start justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/20
+                      flex items-center justify-center text-lg">💰</div>
+          <span id="badge-savings-pct"
+                class="text-xs font-semibold text-emerald-400 bg-emerald-500/10
+                       border border-emerald-500/20 px-2 py-0.5 rounded-full">—</span>
+        </div>
+        <div id="stat-cost-saved" class="text-3xl font-bold tracking-tight text-emerald-400 mb-1">—</div>
+        <div class="text-sm text-slate-400">Cost Saved</div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-500">
+          <span>Spent: <span id="stat-cost-spent" class="text-slate-300 font-medium">—</span></span>
+          <span>Without cache: <span id="stat-cost-total" class="text-slate-300 font-medium">—</span></span>
+        </div>
+      </div>
+
+      <!-- Tokens Saved -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-5
+                  fade-in fade-in-5">
+        <div class="flex items-start justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-violet-500/15 border border-violet-500/20
+                      flex items-center justify-center text-lg">⚡</div>
+          <span class="text-xs font-medium text-slate-400 bg-slate-700/50 px-2 py-0.5 rounded-full">tokens</span>
+        </div>
+        <div id="stat-tokens-saved" class="text-3xl font-bold tracking-tight text-violet-400 mb-1">—</div>
+        <div class="text-sm text-slate-400">Tokens Saved</div>
+        <div class="mt-3 h-1.5 rounded-full bg-slate-700/60 overflow-hidden">
+          <div id="bar-tokens" class="h-1.5 rounded-full bg-gradient-to-r from-violet-500 to-violet-400 transition-all duration-700" style="width:0%"></div>
+        </div>
+        <div class="mt-1.5 flex justify-between text-xs text-slate-500">
+          <span>Used: <span id="stat-tokens-used" class="text-slate-300 font-medium">—</span></span>
+          <span id="stat-tokens-pct" class="text-violet-400 font-medium">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Charts ─────────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 fade-in fade-in-5">
+
+      <!-- Donut — Cache Distribution -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-6 lg:col-span-2">
+        <div class="flex items-center justify-between mb-5">
+          <div>
+            <h2 class="font-semibold text-white">Cache Distribution</h2>
+            <p class="text-xs text-slate-400 mt-0.5">Breakdown by cache tier</p>
+          </div>
+          <span class="text-xl">🍩</span>
+        </div>
+        <div class="relative flex items-center justify-center" style="height:200px">
+          <canvas id="donutChart"></canvas>
+          <!-- Center label -->
+          <div class="absolute text-center pointer-events-none">
+            <div id="donut-center-value" class="text-2xl font-bold text-white">—</div>
+            <div class="text-xs text-slate-400">total hits</div>
+          </div>
+        </div>
+        <!-- Legend -->
+        <div class="mt-5 grid grid-cols-3 gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0"></div>
+            <div>
+              <div class="text-xs text-slate-400">Exact</div>
+              <div id="legend-exact" class="text-sm font-semibold text-white">—</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-cyan-400 flex-shrink-0"></div>
+            <div>
+              <div class="text-xs text-slate-400">Semantic</div>
+              <div id="legend-semantic" class="text-sm font-semibold text-white">—</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-slate-600 flex-shrink-0"></div>
+            <div>
+              <div class="text-xs text-slate-400">Miss</div>
+              <div id="legend-miss" class="text-sm font-semibold text-white">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bar — Token Usage -->
+      <div class="gradient-border card-glow rounded-2xl
+                  bg-gradient-to-br from-slate-800 to-slate-800/60 p-6 lg:col-span-3">
+        <div class="flex items-center justify-between mb-5">
+          <div>
+            <h2 class="font-semibold text-white">Token Usage</h2>
+            <p class="text-xs text-slate-400 mt-0.5">Saved vs consumed vs projected</p>
+          </div>
+          <span class="text-xl">📈</span>
+        </div>
+        <div style="height:224px">
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Detail Sections ────────────────────────────────────── -->
+    <div class="space-y-3 fade-in fade-in-6">
+
+      <!-- Cache Performance -->
+      <div class="gradient-border rounded-2xl bg-gradient-to-br from-slate-800 to-slate-800/60 overflow-hidden">
+        <button onclick="toggleAccordion('acc-cache')"
+                class="w-full flex items-center justify-between px-6 py-4
+                       hover:bg-white/[0.02] transition-colors duration-200">
+          <div class="flex items-center gap-3">
+            <span class="text-lg">🏎️</span>
+            <div class="text-left">
+              <div class="font-semibold text-white">Cache Performance</div>
+              <div class="text-xs text-slate-400">Hit/miss breakdown by tier</div>
+            </div>
+          </div>
+          <svg id="chevron-acc-cache" class="chevron w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div id="acc-cache" class="accordion-body">
+          <div class="px-6 pb-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Exact Hits</div>
+              <div id="detail-exact-hits" class="text-xl font-bold text-blue-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Semantic Hits</div>
+              <div id="detail-semantic-hits" class="text-xl font-bold text-cyan-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Total Hits</div>
+              <div id="detail-total-hits" class="text-xl font-bold text-emerald-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Misses</div>
+              <div id="detail-misses" class="text-xl font-bold text-red-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Total Requests</div>
+              <div id="detail-total-req" class="text-xl font-bold text-white">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-3 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-1">Hit Rate</div>
+              <div id="detail-hit-rate" class="text-xl font-bold text-emerald-400">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Token Usage -->
+      <div class="gradient-border rounded-2xl bg-gradient-to-br from-slate-800 to-slate-800/60 overflow-hidden">
+        <button onclick="toggleAccordion('acc-tokens')"
+                class="w-full flex items-center justify-between px-6 py-4
+                       hover:bg-white/[0.02] transition-colors duration-200">
+          <div class="flex items-center gap-3">
+            <span class="text-lg">⚡</span>
+            <div class="text-left">
+              <div class="font-semibold text-white">Token Usage</div>
+              <div class="text-xs text-slate-400">Efficiency metrics</div>
+            </div>
+          </div>
+          <svg id="chevron-acc-tokens" class="chevron w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div id="acc-tokens" class="accordion-body">
+          <div class="px-6 pb-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Tokens Saved</div>
+              <div id="detail-tokens-saved" class="text-2xl font-bold text-violet-400">—</div>
+              <div class="mt-2 h-1 rounded-full bg-slate-700 overflow-hidden">
+                <div id="bar-detail-saved" class="h-1 rounded-full bg-violet-500 transition-all duration-700" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Tokens Used</div>
+              <div id="detail-tokens-used" class="text-2xl font-bold text-amber-400">—</div>
+              <div class="mt-2 h-1 rounded-full bg-slate-700 overflow-hidden">
+                <div id="bar-detail-used" class="h-1 rounded-full bg-amber-500 transition-all duration-700" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Without Cache</div>
+              <div id="detail-tokens-total" class="text-2xl font-bold text-slate-300">—</div>
+              <div class="mt-2 h-1 rounded-full bg-slate-700 overflow-hidden">
+                <div class="h-1 rounded-full bg-slate-500 w-full"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cost Analysis -->
+      <div class="gradient-border rounded-2xl bg-gradient-to-br from-slate-800 to-slate-800/60 overflow-hidden">
+        <button onclick="toggleAccordion('acc-cost')"
+                class="w-full flex items-center justify-between px-6 py-4
+                       hover:bg-white/[0.02] transition-colors duration-200">
+          <div class="flex items-center gap-3">
+            <span class="text-lg">💸</span>
+            <div class="text-left">
+              <div class="font-semibold text-white">Cost Analysis</div>
+              <div class="text-xs text-slate-400">Dollar savings breakdown</div>
+            </div>
+          </div>
+          <svg id="chevron-acc-cost" class="chevron w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div id="acc-cost" class="accordion-body">
+          <div class="px-6 pb-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Cost Saved</div>
+              <div id="detail-cost-saved" class="text-2xl font-bold text-emerald-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Cost Spent</div>
+              <div id="detail-cost-spent" class="text-2xl font-bold text-amber-400">—</div>
+            </div>
+            <div class="rounded-xl bg-slate-700/30 p-4 border border-slate-700/40">
+              <div class="text-xs text-slate-400 mb-2">Without Cache</div>
+              <div id="detail-cost-total" class="text-2xl font-bold text-slate-300">—</div>
+            </div>
+            <div class="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+              <div class="text-xs text-slate-400 mb-2">Savings %</div>
+              <div id="detail-savings-pct" class="text-2xl font-bold text-emerald-400">—</div>
+              <div class="text-xs text-emerald-500/70 mt-1">vs full cost</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Footer ─────────────────────────────────────────────── -->
+    <footer class="text-center text-xs text-slate-600 pb-4 fade-in fade-in-6">
+      Auto-refreshing every 5 s &nbsp;·&nbsp; Polling <code class="text-slate-500">/metrics</code>
+    </footer>
+
+  </div><!-- /container -->
+
+  <script>
+    // ─── Chart instances ─────────────────────────────────────────
+    let donutChart = null;
+    let barChart   = null;
+
+    // ─── Helpers ─────────────────────────────────────────────────
+    const fmt = (n) => Number(n).toLocaleString();
+
+    function setText(id, val) {
+      const el = document.getElementById(id);
+      if (el && el.textContent !== String(val)) el.textContent = val;
+    }
+
+    function setWidth(id, pct) {
+      const el = document.getElementById(id);
+      if (el) el.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
+
+    // ─── Accordion ───────────────────────────────────────────────
+    function toggleAccordion(id) {
+      const body    = document.getElementById(id);
+      const chevron = document.getElementById('chevron-' + id);
+      body.classList.toggle('open');
+      chevron.classList.toggle('open');
+    }
+
+    // ─── Circular ring ───────────────────────────────────────────
+    function setRing(id, pct) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const circumference = 138.2;
+      const offset = circumference * (1 - Math.min(100, Math.max(0, pct)) / 100);
+      el.style.strokeDashoffset = offset;
+    }
+
+    // ─── Init Charts ─────────────────────────────────────────────
+    function initCharts() {
+      // Donut
+      const dCtx = document.getElementById('donutChart').getContext('2d');
+      donutChart = new Chart(dCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Exact Hits', 'Semantic Hits', 'Misses'],
+          datasets: [{
+            data: [0, 0, 1],
+            backgroundColor: ['#3b82f6', '#22d3ee', '#334155'],
+            borderColor: 'transparent',
+            borderWidth: 0,
+            hoverOffset: 6,
+          }]
+        },
+        options: {
+          cutout: '70%',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ` ${ctx.label}: ${fmt(ctx.raw)}`
+              },
+              backgroundColor: '#1e293b',
+              borderColor: '#334155',
+              borderWidth: 1,
+              titleColor: '#94a3b8',
+              bodyColor: '#e2e8f0',
+              padding: 10,
+            }
+          }
+        }
+      });
+
+      // Bar
+      const bCtx = document.getElementById('barChart').getContext('2d');
+      barChart = new Chart(bCtx, {
+        type: 'bar',
+        data: {
+          labels: ['Tokens Saved', 'Tokens Used', 'Without Cache'],
+          datasets: [{
+            label: 'Tokens',
+            data: [0, 0, 0],
+            backgroundColor: [
+              'rgba(139,92,246,0.8)',
+              'rgba(251,191,36,0.8)',
+              'rgba(100,116,139,0.5)',
+            ],
+            borderRadius: 8,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ` ${fmt(ctx.raw)} tokens`
+              },
+              backgroundColor: '#1e293b',
+              borderColor: '#334155',
+              borderWidth: 1,
+              titleColor: '#94a3b8',
+              bodyColor: '#e2e8f0',
+              padding: 10,
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(51,65,85,0.4)' },
+              ticks: { color: '#64748b', font: { size: 11 } },
+              border: { color: 'transparent' },
+            },
+            y: {
+              grid: { color: 'rgba(51,65,85,0.4)' },
+              ticks: {
+                color: '#64748b',
+                font: { size: 11 },
+                callback: (v) => v >= 1000 ? (v/1000).toFixed(0)+'k' : v,
+              },
+              border: { color: 'transparent' },
+            }
+          }
+        }
+      });
+    }
+
+    // ─── Update UI ───────────────────────────────────────────────
+    function updateUI(data) {
+      const cp = data.cache_performance;
+      const tu = data.token_usage;
+      const ca = data.cost_analysis;
+
+      // ── Stat cards ──────────────────────────────────────────────
+      setText('stat-total-requests', fmt(cp.total_requests));
+      setText('stat-exact-hits',     fmt(cp.exact_hits));
+      setText('stat-semantic-hits',  fmt(cp.semantic_hits));
+
+      const hitRaw = parseFloat(cp.hit_rate_percent) || 0;
+      setText('stat-hit-rate', cp.hit_rate_percent);
+      setRing('ring-hit', hitRaw);
+      setWidth('bar-total', cp.total_requests > 0 ? (cp.total_hits / cp.total_requests * 100) : 0);
+
+      setText('stat-cost-saved',  ca.cost_saved_usd);
+      setText('stat-cost-spent',  ca.cost_spent_usd);
+      setText('stat-cost-total',  ca.total_cost_without_cache_usd);
+      setText('badge-savings-pct', ca.savings_percent);
+
+      const tokensSaved = tu.tokens_saved;
+      const tokensTotal = tu.total_tokens_without_cache;
+      const tokenPct    = tokensTotal > 0 ? (tokensSaved / tokensTotal * 100).toFixed(1) : 0;
+      setText('stat-tokens-saved', tokensSaved >= 1000 ? (tokensSaved/1000).toFixed(1)+'k' : fmt(tokensSaved));
+      setText('stat-tokens-used',  tu.tokens_used >= 1000 ? (tu.tokens_used/1000).toFixed(1)+'k' : fmt(tu.tokens_used));
+      setText('stat-tokens-pct',   tokenPct + '% saved');
+      setWidth('bar-tokens', tokenPct);
+
+      // ── Donut chart ─────────────────────────────────────────────
+      if (donutChart) {
+        donutChart.data.datasets[0].data = [cp.exact_hits, cp.semantic_hits, cp.misses];
+        donutChart.update('active');
+      }
+      setText('donut-center-value', fmt(cp.total_hits));
+      setText('legend-exact',    fmt(cp.exact_hits));
+      setText('legend-semantic', fmt(cp.semantic_hits));
+      setText('legend-miss',     fmt(cp.misses));
+
+      // ── Bar chart ───────────────────────────────────────────────
+      if (barChart) {
+        barChart.data.datasets[0].data = [tu.tokens_saved, tu.tokens_used, tu.total_tokens_without_cache];
+        barChart.update('active');
+      }
+
+      // ── Detail panels ───────────────────────────────────────────
+      setText('detail-exact-hits',    fmt(cp.exact_hits));
+      setText('detail-semantic-hits', fmt(cp.semantic_hits));
+      setText('detail-total-hits',    fmt(cp.total_hits));
+      setText('detail-misses',        fmt(cp.misses));
+      setText('detail-total-req',     fmt(cp.total_requests));
+      setText('detail-hit-rate',      cp.hit_rate_percent);
+
+      const savedPct = tokensTotal > 0 ? (tokensSaved / tokensTotal * 100) : 0;
+      const usedPct  = tokensTotal > 0 ? (tu.tokens_used  / tokensTotal * 100) : 0;
+      setText('detail-tokens-saved', fmt(tu.tokens_saved));
+      setText('detail-tokens-used',  fmt(tu.tokens_used));
+      setText('detail-tokens-total', fmt(tu.total_tokens_without_cache));
+      setWidth('bar-detail-saved', savedPct);
+      setWidth('bar-detail-used',  usedPct);
+
+      setText('detail-cost-saved',  ca.cost_saved_usd);
+      setText('detail-cost-spent',  ca.cost_spent_usd);
+      setText('detail-cost-total',  ca.total_cost_without_cache_usd);
+      setText('detail-savings-pct', ca.savings_percent);
+
+      // ── Timestamp ───────────────────────────────────────────────
+      const now = new Date();
+      setText('last-updated', now.toLocaleTimeString());
+
+      // Hide error badge
+      document.getElementById('error-badge').classList.add('hidden');
+      document.getElementById('error-badge').classList.remove('flex');
+    }
+
+    // ─── Fetch ───────────────────────────────────────────────────
+    async function fetchMetrics() {
+      try {
+        const res = await fetch('/metrics');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        updateUI(data);
+      } catch (err) {
+        const badge = document.getElementById('error-badge');
+        badge.classList.remove('hidden');
+        badge.classList.add('flex');
+        badge.classList.add('shake');
+        setTimeout(() => badge.classList.remove('shake'), 400);
+        document.getElementById('error-text').textContent = err.message || 'Unable to reach /metrics';
+        console.warn('[dashboard] fetch error:', err);
+      }
+    }
+
+    // ─── Bootstrap ───────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      fetchMetrics();
+      setInterval(fetchMetrics, 5000);
+    });
+  </script>
+</body>
+</html>

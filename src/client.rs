@@ -9,6 +9,7 @@ pub async fn call_llm(
 
     let response = client
         .post("https://api.groq.com/openai/v1/chat/completions")
+        .timeout(std::time::Duration::from_secs(60))
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&request)
         .send()
