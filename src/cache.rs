@@ -151,7 +151,8 @@ impl QdrantCache {
         &self,
         cache_key: &str,
         embedding: Vec<f32>,
-        cached_response: &str
+        cached_response: &str,
+        temperature: f32,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let point = PointStruct::new(
@@ -159,7 +160,8 @@ impl QdrantCache {
             embedding,
             [
                 ("cache_key", cache_key.into()),
-                ("response", cached_response.into())
+                ("response", cached_response.into()),
+                ("temperature", (temperature as f64).into()),
             ]
         );
 
@@ -180,7 +182,8 @@ impl QdrantCache {
     pub async fn search_similar(
         &self,
         embedding: Vec<f32>,
-        similarity_threshold: f32
+        similarity_threshold: f32,
+        temperature: f32,
     ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
 
         let search_result = self.client.search_points(
@@ -190,6 +193,19 @@ impl QdrantCache {
         ).await?;
 
         if let Some(point) = search_result.result.first() {
+            // Check temperature compatibility — don't return a cached response
+            // if it was generated with a significantly different temperature.
+            // Entries stored before this fix won't have the field; treat as compatible.
+            let stored_temp = point.payload.get("temperature")
+                .and_then(|v| v.kind.as_ref())
+                .and_then(|k| if let Kind::DoubleValue(f) = k { Some(*f as f32) } else { None });
+
+            if let Some(stored) = stored_temp {
+                if (stored - temperature).abs() > 0.05 {
+                    return Ok(None);
+                }
+            }
+
             if let Some(response_value) = point.payload.get("response") {
                 if let Some(kind) = &response_value.kind {
                     if let Kind::StringValue(s) = kind {
@@ -312,11 +328,12 @@ mod tests {
         qdrant.store(
             "test_key_1",
             embedding1.clone(),
-            "Rust is a programming language"
+            "Rust is a programming language",
+            0.0,
         ).await.expect("Failed to store");
-        
+
         // Search with same embedding (should find exact match)
-        let result = qdrant.search_similar(embedding1, 0.99)
+        let result = qdrant.search_similar(embedding1, 0.99, 0.0)
             .await
             .expect("Search failed");
         

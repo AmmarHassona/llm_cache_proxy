@@ -1,34 +1,40 @@
 # LLM Cache Proxy
 
-A caching proxy for LLM APIs, written in Rust. Sits between your application and the LLM API, returning cached responses instead of making redundant API calls. Compatible with any client that uses the OpenAI API format.
+A caching proxy for LLM APIs, built in Rust. Sits between your application and the Groq API, serving cached responses instead of making redundant API calls. Drop-in compatible with any client that uses the OpenAI API format.
+
+![Architecture](llm_cache_proxy.png)
+
+---
 
 ## How It Works
 
-Requests pass through two cache tiers before reaching the LLM:
+Every request passes through two cache tiers before reaching the LLM:
 
 ```
 Request
   │
   ▼
-Tier 1: Redis (exact match)
-  Hit  ──────────────────────────────→ Return cached response (~1ms)
+Tier 1: Redis (exact match)       ← SHA256 hash lookup, sub-millisecond
+  Hit  ──────────────────────────────→ Return cached response
   Miss
   │
   ▼
-Tier 2: Qdrant (semantic similarity)
-  Hit  ──→ Promote to Redis ─────────→ Return cached response (~10-50ms)
+Tier 2: Qdrant (semantic match)   ← Vector similarity search (≥ 0.90 cosine)
+  Hit  ──→ Promote to Redis ─────────→ Return cached response
   Miss
   │
   ▼
-Tier 3: Groq API
-         Store in Redis + Qdrant ────→ Return response (~1-3s)
+Tier 3: Groq API                  ← Only called when both caches miss
+         Store in Redis + Qdrant ────→ Return response
 ```
 
-**Tier 1 — Exact match (Redis):** The request is normalized (whitespace, case) and hashed with SHA256. If the same prompt has been seen before, the response is returned immediately.
+**Tier 1 — Exact match (Redis):** The prompt is normalized and hashed with SHA256. Identical requests are served in ~4ms.
 
-**Tier 2 — Semantic match (Qdrant):** If exact match fails, the prompt is converted into a 384-dimensional vector embedding and compared against all previously cached prompts using cosine similarity. If a semantically similar prompt is found (score ≥ 0.90), its response is returned. The result is also stored in Redis so the next identical request skips this tier entirely.
+**Tier 2 — Semantic match (Qdrant):** The prompt is embedded into a 384-dimensional vector and compared against all previously cached prompts. If a semantically similar prompt is found (cosine similarity ≥ 0.90), its cached response is returned. The result is promoted to Redis so future identical requests skip this tier entirely.
 
-**Tier 3 — LLM call (Groq):** If both caches miss, the request is forwarded to Groq. The response is stored in both Redis and Qdrant for future use.
+**Tier 3 — LLM call (Groq):** On a full miss, the request is forwarded to Groq and the response is stored in both tiers.
+
+---
 
 ## Services
 
@@ -36,26 +42,19 @@ Tier 3: Groq API
 |---------|------|------|
 | Rust proxy | Request handling, cache orchestration | 3000 |
 | Redis | Exact match cache | 6379 |
-| Qdrant | Vector store for semantic search | 6333/6334 |
+| Qdrant | Vector store for semantic search | 6333 / 6334 |
 | Python FastAPI | Text embedding service (`all-MiniLM-L6-v2`) | 8001 |
 
-All four services run together via Docker Compose.
+All four services are orchestrated via Docker Compose.
 
-## Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/v1/chat/completions` | Main proxy — OpenAI-compatible |
-| `GET`  | `/health` | Health check for all services |
-| `GET`  | `/metrics` | Cache performance and cost metrics |
-| `GET`  | `/dashboard` | Live web dashboard |
-| `POST` | `/admin/cache/clear` | Clear the Redis cache |
-| `GET`  | `/admin/stats` | Metrics + service status combined |
+---
 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - A [Groq API key](https://console.groq.com) (free tier available)
+
+---
 
 ## Setup
 
@@ -72,13 +71,13 @@ cd llm_cache_proxy
 cp .env.example .env
 ```
 
-Open `.env` and set your Groq API key:
+Open `.env` and add your Groq API key:
 
 ```env
 GROQ_API_KEY=your-api-key-here
 ```
 
-The other variables have working defaults and do not need to be changed when running via Docker Compose.
+The remaining variables have working defaults for Docker Compose and do not need to be changed.
 
 **3. Create the logs directory**
 
@@ -92,11 +91,15 @@ mkdir -p logs
 docker-compose up --build
 ```
 
-The proxy starts on port 3000 once Redis, Qdrant, and the embedding service all pass their health checks. The embedding service downloads the `all-MiniLM-L6-v2` model (~80MB) on first run — this takes a minute.
+The proxy starts on port 3000 once Redis, Qdrant, and the embedding service all pass their health checks. On first run, the embedding service downloads the `all-MiniLM-L6-v2` model (~80MB) — this takes about a minute.
+
+![Terminal](Terminal%20Screenshot.png)
+
+---
 
 ## Usage
 
-The proxy is a drop-in replacement for any OpenAI-compatible client. Point `base_url` at `http://localhost:3000/v1`.
+The proxy is a drop-in replacement for any OpenAI-compatible client. Just point `base_url` at `http://localhost:3000/v1`.
 
 **With the OpenAI Python SDK:**
 
@@ -105,7 +108,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:3000/v1",
-    api_key="any-string",  # the proxy uses its own Groq key
+    api_key="any-string",  # proxy uses its own GROQ_API_KEY internally
 )
 
 response = client.chat.completions.create(
@@ -130,38 +133,77 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### Supported Models
 
-Any Groq model can be used. Pricing in `/metrics` is accurate for:
+Any Groq model works. Pricing in `/metrics` is accurate for:
 
-- `llama-3.3-70b-versatile`
-- `llama-3.1-8b-instant`
-- `llama-4-scout`
-- `llama-4-maverick`
-- `qwen3-32b`
-- `kimi-k2-0905-1t`
-- `gpt-oss-20b`, `gpt-oss-120b`
+`llama-3.3-70b-versatile` · `llama-3.1-8b-instant` · `llama-4-scout` · `llama-4-maverick` · `qwen3-32b` · `kimi-k2-0905-1t` · `gpt-oss-20b` · `gpt-oss-120b`
 
 ### Optional Request Headers
 
 | Header | Example | Effect |
 |--------|---------|--------|
-| `x-bypass-cache` | `true` | Skip cache read and write, always call LLM |
+| `x-bypass-cache` | `true` | Skip cache entirely, always call LLM |
 | `x-cache-ttl` | `3600` | Override Redis TTL for this response (seconds) |
+
+---
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | Main proxy — OpenAI-compatible |
+| `GET`  | `/health` | Live health check for all services |
+| `GET`  | `/metrics` | Cache performance and cost breakdown |
+| `GET`  | `/dashboard` | Live web dashboard |
+| `POST` | `/admin/cache/clear` | Flush the Redis cache |
+| `GET`  | `/admin/stats` | Metrics + service status combined |
+
+---
 
 ## Dashboard
 
-Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard) in your browser. It polls `/metrics` every 5 seconds and displays hit rate, token savings, cost savings, and cache distribution charts.
+Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard) after starting. It auto-refreshes every 5 seconds from `/metrics` and shows hit rate, token savings, cost savings, and cache distribution charts.
+
+---
+
+## Performance
+
+Results from an 81-request benchmark across 9 scenarios (repeated queries, concurrent requests, and unique real-world questions). Tested using `llama-3.3-70b-versatile` on the Groq free tier.
+
+**Response latency by cache tier:**
+
+| Tier | Median | Mean | p95 |
+|------|--------|------|-----|
+| Exact hit (Redis) | 4ms | 4ms | 5ms |
+| Semantic hit (Qdrant) | 8ms | 21ms | 83ms |
+| Cache miss (Groq API) | 2,157ms | 2,182ms | 3,230ms |
+
+**Hit rate by scenario:**
+
+| Scenario | Hit Rate | Notes |
+|----------|----------|-------|
+| Repeated queries | 72% | Same questions sent multiple times |
+| Concurrent requests | 65% | Same questions sent in parallel across workers |
+| Similar phrasing | 66% | Paraphrases of the same question |
+| Unique debugging questions | 10% | 10 genuinely different questions, cold cache |
+| Unique architecture questions | 0% | 10 genuinely different questions, cold cache |
+
+The cache performs best when traffic contains repeated or similar questions — FAQ bots, documentation assistants, or domain-specific tools. For a general-purpose assistant where every question is unique, hit rates will be low. 0 errors across all 81 requests.
+
+---
 
 ## Testing
 
-A test script is included that uses the OpenAI Python SDK:
+A test script using the OpenAI Python SDK is included:
 
 ```bash
 cd python_embedding
-source venv/bin/activate  # or create one: python3 -m venv venv && pip install -r requirements.txt
+source venv/bin/activate
 python test_proxy.py
 ```
 
-The script sends 5 requests designed to exercise each cache tier and prints a metrics summary at the end.
+Sends 5 requests covering each cache tier and prints a metrics summary at the end.
+
+---
 
 ## Environment Variables
 
@@ -173,7 +215,9 @@ The script sends 5 requests designed to exercise each cache tier and prints a me
 | `EMBEDDING_URL` | `http://127.0.0.1:8001/embed` | Embedding service endpoint |
 | `LOG_PATH` | `./requests.log` | Path for the request log file |
 
-When running via Docker Compose, the internal service hostnames (`redis`, `qdrant`, `embeddings`) are set automatically.
+When running via Docker Compose, the internal service hostnames are set automatically.
+
+---
 
 ## Project Structure
 
@@ -204,10 +248,15 @@ When running via Docker Compose, the internal service hostnames (`redis`, `qdran
 └── .env.example
 ```
 
+---
+
 ## Tech Stack
 
-- **Rust** — proxy server ([Axum](https://github.com/tokio-rs/axum), [Tokio](https://tokio.rs), [reqwest](https://github.com/seanmonstar/reqwest))
-- **Redis** — exact match cache
-- **Qdrant** — vector database for semantic search
-- **Python / FastAPI** — embedding service ([sentence-transformers](https://www.sbert.net/), `all-MiniLM-L6-v2`)
-- **Docker Compose** — multi-service orchestration
+| Layer | Technology |
+|-------|-----------|
+| Proxy server | Rust — [Axum](https://github.com/tokio-rs/axum), [Tokio](https://tokio.rs), [reqwest](https://github.com/seanmonstar/reqwest) |
+| Exact match cache | Redis |
+| Semantic cache | Qdrant (vector database) |
+| Embedding service | Python / FastAPI — [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2`) |
+| Orchestration | Docker Compose |
+| LLM backend | Groq API |

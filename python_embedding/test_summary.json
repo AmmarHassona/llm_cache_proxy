@@ -1,0 +1,76 @@
+{
+  "total_requests": 81,
+  "exact_hits": 13,
+  "semantic_hits": 26,
+  "misses": 42,
+  "errors": 0,
+  "hit_rate": 48.148148148148145,
+  "cost_saved_usd": 0.021179000000000017,
+  "cost_spent_usd": 0.023046999999999998,
+  "savings_percent": 47.88812011034235,
+  "tokens_saved": 30685,
+  "tokens_used": 33395,
+  "latency_exact": {
+    "mean": 3.8515384615384614,
+    "median": 3.88,
+    "p95": 4.945
+  },
+  "latency_semantic": {
+    "mean": 20.53192307692308,
+    "median": 7.55,
+    "p95": 83.4055
+  },
+  "latency_miss": {
+    "mean": 2181.567857142857,
+    "median": 2157.465,
+    "p95": 3230.4134999999997
+  },
+  "by_scenario": {
+    "concurrent": {
+      "total": 20,
+      "hits": 13,
+      "hit_rate": 65.0
+    },
+    "rapid_fire": {
+      "total": 25,
+      "hits": 18,
+      "hit_rate": 72.0
+    },
+    "realistic_debugging": {
+      "total": 10,
+      "hits": 1,
+      "hit_rate": 10.0
+    },
+    "max_tokens": {
+      "total": 3,
+      "hits": 2,
+      "hit_rate": 66.66666666666666
+    },
+    "architecture": {
+      "total": 10,
+      "hits": 0,
+      "hit_rate": 0.0
+    },
+    "temperature": {
+      "total": 4,
+      "hits": 1,
+      "hit_rate": 25.0
+    },
+    "semantic_unrelated": {
+      "total": 3,
+      "hits": 0,
+      "hit_rate": 0.0
+    },
+    "semantic_error": {
+      "total": 3,
+      "hits": 2,
+      "hit_rate": 66.66666666666666
+    },
+    "semantic_oauth": {
+      "total": 3,
+      "hits": 2,
+      "hit_rate": 66.66666666666666
+    }
+  },
+  "rate_limit_waits": 38
+}

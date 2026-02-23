@@ -142,7 +142,7 @@ pub async fn proxy_handler(
         match &maybe_embedding {
             Ok(embedding) => {
                 // Search for similar cached responses
-                match state.qdrant_cache.search_similar(embedding.clone(), 0.90).await {
+                match state.qdrant_cache.search_similar(embedding.clone(), 0.90, temperature).await {
                     Ok(Some(cached_response)) => {
                         println!("Semantic Cache Hit");
 
@@ -213,7 +213,7 @@ pub async fn proxy_handler(
 
     // store in Qdrant — reuse embedding from semantic search, avoid a second HTTP call
     if let Ok(embedding) = maybe_embedding {
-        if let Err(e) = state.qdrant_cache.store(&cache_key, embedding, &response_json).await {
+        if let Err(e) = state.qdrant_cache.store(&cache_key, embedding, &response_json, temperature).await {
             println!("Failed to cache in Qdrant: {}", e);
         } else {
             println!("Stored in Qdrant");
