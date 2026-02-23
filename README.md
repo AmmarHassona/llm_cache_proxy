@@ -1,6 +1,14 @@
 # LLM Cache Proxy
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)
+
 A caching proxy for LLM APIs, built in Rust. Sits between your application and the Groq API, serving cached responses instead of making redundant API calls. Drop-in compatible with any client that uses the OpenAI API format.
+
+---
+
+## Architecture
 
 ![Architecture](llm_cache_proxy.png)
 
@@ -46,6 +54,19 @@ Tier 3: Groq API                  ← Only called when both caches miss
 | Python FastAPI | Text embedding service (`all-MiniLM-L6-v2`) | 8001 |
 
 All four services are orchestrated via Docker Compose.
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/AmmarHassona/llm_cache_proxy.git
+cd llm_cache_proxy
+echo "GROQ_API_KEY=your-key" > .env
+docker-compose up
+```
+
+Proxy runs at `http://localhost:3000`.
 
 ---
 
@@ -193,15 +214,13 @@ The cache performs best when traffic contains repeated or similar questions — 
 
 ## Testing
 
-A test script using the OpenAI Python SDK is included:
+The performance test script using the OpenAI Python SDK is included:
 
 ```bash
 cd python_embedding
 source venv/bin/activate
-python test_proxy.py
+python test_cache_performance.py
 ```
-
-Sends 5 requests covering each cache tier and prints a metrics summary at the end.
 
 ---
 
@@ -233,7 +252,7 @@ When running via Docker Compose, the internal service hostnames are set automati
 │   └── logger.rs      # Request log writer
 ├── python_embedding/
 │   ├── main.py        # FastAPI embedding service
-│   ├── test_proxy.py  # Integration test script
+│   ├── test_cache_proxy.py  # Integration test script
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── documentation/
@@ -260,3 +279,9 @@ When running via Docker Compose, the internal service hostnames are set automati
 | Embedding service | Python / FastAPI — [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2`) |
 | Orchestration | Docker Compose |
 | LLM backend | Groq API |
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
