@@ -252,7 +252,7 @@ When running via Docker Compose, the internal service hostnames are set automati
 │   └── logger.rs      # Request log writer
 ├── python_embedding/
 │   ├── main.py        # FastAPI embedding service
-│   ├── test_cache_proxy.py  # Integration test script
+│   ├── test_cache_performance.py  # Test script
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── documentation/
